@@ -57,7 +57,7 @@ def restore_nodes():
     _FAKE_NODES = [CONF.host]
 
 
-class FakeInstance(object):
+class EC2Instance(object):
 
     def __init__(self, name, state):
         self.name = name
@@ -67,7 +67,7 @@ class FakeInstance(object):
         return getattr(self, key)
 
 
-class FakeDriver(driver.ComputeDriver):
+class EC2Driver(driver.ComputeDriver):
     capabilities = {
         "has_imagecache": True,
         "supports_recreate": True,
@@ -76,29 +76,30 @@ class FakeDriver(driver.ComputeDriver):
     """Fake hypervisor driver. Respurposing for EC2"""
 
     def __init__(self, virtapi, read_only=False):
-        super(FakeDriver, self).__init__(virtapi)
+        super(EC2Driver, self).__init__(virtapi)
         self.instances = {}
         self.host_status_base = {
-          'vcpus': 170000,
-          'memory_mb': 1700000000,
-          'local_gb': 170000000000,
-          'vcpus_used': 0,
-          'memory_mb_used': 0,
-          'local_gb_used': 170000000000,
-          'hypervisor_type': 'EC2Driver',
-          'hypervisor_version': '1.0',
-          'hypervisor_hostname': CONF.host,
-          'cpu_info': {},
-          'disk_available_least': 170000000000,
+            'vcpus': 170000,
+            'memory_mb': 1700000000,
+            'local_gb': 170000000000,
+            'vcpus_used': 0,
+            'memory_mb_used': 0,
+            'local_gb_used': 170000000000,
+            'hypervisor_type': 'EC2Driver',
+            'hypervisor_version': '1.0',
+            'hypervisor_hostname': CONF.host,
+            'cpu_info': {},
+            'disk_available_least': 170000000000,
           }
         self._mounts = {}
         self._interfaces = {}
         
-	#To connect to EC2
-	self.ec2_conn = ec2.connect_to_region(aws_region, aws_access_key_id=aws_access_key_id, aws_secret_access_key=aws_secret_access_key)
-	
-	self.reservation = self.ec2_conn.get_all_reservations()
-	if not _FAKE_NODES:
+        #To connect to EC2
+        self.ec2_conn = ec2.connect_to_region(aws_region, aws_access_key_id=aws_access_key_id,
+                                              aws_secret_access_key=aws_secret_access_key)
+        self.reservation = self.ec2_conn.get_all_reservations()
+
+    if not _FAKE_NODES:
             set_nodes([CONF.host])
 
     def init_host(self, host):
@@ -119,14 +120,16 @@ class FakeDriver(driver.ComputeDriver):
               admin_password, network_info=None, block_device_info=None):
         name = instance['name']
         state = power_state.RUNNING
-        fake_instance = FakeInstance(name, state)
+        fake_instance = EC2Instance(name, state)
         self.instances[name] = fake_instance
-	
-	#Creating the EC2 instance
 
-	reservation = self.ec2_conn.run_instances(aws_ami, instance_type=instance_type)
+    #Creating the EC2 instance
+
+        reservation = self.ec2_conn.run_instances(aws_ami, instance_type=instance_type)
+
         ec2_instance = reservation.instances
-	instance_map[name] = ec2_instance[0].id
+        instance_map[name] = ec2_instance[0].id
+
     def live_snapshot(self, context, instance, name, update_task_state):
         if instance['name'] not in self.instances:
             raise exception.InstanceNotRunning(instance_id=instance['uuid'])
@@ -181,14 +184,16 @@ class FakeDriver(driver.ComputeDriver):
         pass
 
     def power_off(self, instance):
-	key = instance['name']
-	instance_id = instance_map[key]
-	self.ec2_conn.stop_instances(instance_ids=[instance_id], force=True)
 
-    def power_on(self, context, instance, network_info, block_device_info):
-	key = instance['name']
+        key = instance['name']
         instance_id = instance_map[key]
         self.ec2_conn.stop_instances(instance_ids=[instance_id], force=True)
+
+    def power_on(self, context, instance, network_info, block_device_info):
+
+        key = instance['name']
+        instance_id = instance_map[key]
+        self.ec2_conn.start_instances(instance_ids=[instance_id])
 
     def soft_delete(self, instance):
         pass
@@ -211,18 +216,19 @@ class FakeDriver(driver.ComputeDriver):
     def destroy(self, instance, network_info, block_device_info=None,
                 destroy_disks=True, context=None):
         key = instance['name']
+
         if key in self.instances:
+
             del self.instances[key]
-	
-	    #Now deleting this instance in EC2 as well
-	    instance_id = instance_map[key]
-	    self.ec2_conn.stop_instances(instance_ids=[instance_id], force=True)
-	    self.ec2_conn.terminate_instances(instance_ids=[instance_id])
+
+            #Now deleting this instance in EC2 as well
+            instance_id = instance_map[key]
+            self.ec2_conn.stop_instances(instance_ids=[instance_id], force=True)
+            self.ec2_conn.terminate_instances(instance_ids=[instance_id])
 
         else:
             LOG.warning(_("Key '%(key)s' not in instances '%(inst)s'") %
-                        {'key': key,
-                         'inst': self.instances}, instance=instance)
+                        {'key': key, 'inst': self.instances}, instance=instance)
 
     def attach_volume(self, context, connection_info, instance, mountpoint,
                       encryption=None):
@@ -356,7 +362,7 @@ class FakeDriver(driver.ComputeDriver):
                'vcpus_used': 0,
                'memory_mb_used': 0,
                'local_gb_used': 0,
-               'hypervisor_type': 'fake',
+               'hypervisor_type': 'EC2Driver',
                'hypervisor_version': '1.0',
                'hypervisor_hostname': nodename,
                'disk_available_least': 0,
